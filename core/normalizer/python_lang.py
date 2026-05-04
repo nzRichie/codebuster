@@ -1,12 +1,19 @@
-import re
+import io
+import keyword
+import token
+import tokenize
+
 from core.normalizer.base import BaseNormalizer
 
-PYTHON_KEYWORDS = {
-    "False", "None", "True", "and", "as", "assert", "async", "await",
-    "break", "class", "continue", "def", "del", "elif", "else", "except",
-    "finally", "for", "from", "global", "if", "import", "in", "is",
-    "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try",
-    "while", "with", "yield",
+PYTHON_KEYWORDS = set(keyword.kwlist) | set(keyword.softkwlist)
+IGNORED_TOKENS = {
+    token.COMMENT,
+    token.ENCODING,
+    token.ENDMARKER,
+    token.INDENT,
+    token.DEDENT,
+    token.NEWLINE,
+    token.NL,
 }
 
 
@@ -14,47 +21,45 @@ class PythonNormalizer(BaseNormalizer):
     extensions = [".py"]
 
     def normalize(self, code: str) -> str:
-        # Strip inline comments
-        code = re.sub(r'#.*?$', '', code, flags=re.MULTILINE)
-
-        # Strip docstrings / triple-quoted strings
-        code = re.sub(r'""".*?"""', '""', code, flags=re.DOTALL)
-        code = re.sub(r"'''.*?'''", "''", code, flags=re.DOTALL)
-
-        def _replace(m: re.Match) -> str:
-            word = m.group(0)
-            return word if word in PYTHON_KEYWORDS else "VAR"
-
-        code = re.sub(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', _replace, code)
-
-        code = re.sub(r'\s+', '', code)
-
-        return code
+        return "".join(_normalized_tokens_by_line(code))
 
     def normalize_lines(self, code: str) -> list[str]:
-        # Remove triple-quoted strings from the full text first so that lines
-        # which are entirely inside a docstring collapse to empty strings.
-        code = re.sub(
-            r'""".*?"""',
-            lambda m: "\n" * m.group(0).count("\n"),
-            code,
-            flags=re.DOTALL,
-        )
-        code = re.sub(
-            r"'''.*?'''",
-            lambda m: "\n" * m.group(0).count("\n"),
-            code,
-            flags=re.DOTALL,
-        )
+        return _normalized_tokens_by_line(code)
 
-        def _replace(m: re.Match) -> str:
-            word = m.group(0)
-            return word if word in PYTHON_KEYWORDS else "VAR"
 
-        result = []
-        for line in code.splitlines():
-            line = re.sub(r'#.*?$', '', line)
-            line = re.sub(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', _replace, line)
-            line = re.sub(r'\s+', '', line)
-            result.append(line)
-        return result
+def _normalized_tokens_by_line(code: str) -> list[str]:
+    lines = code.splitlines()
+    normalized_lines = [""] * len(lines)
+
+    try:
+        tokens = tokenize.generate_tokens(io.StringIO(code).readline)
+        for tok in tokens:
+            normalized = _normalize_token(tok)
+            if not normalized:
+                continue
+
+            line_number = tok.start[0] - 1
+            if 0 <= line_number < len(normalized_lines):
+                normalized_lines[line_number] += normalized
+    except (IndentationError, tokenize.TokenError):
+        # Incomplete submissions should still be comparable up to the point
+        # Python's tokenizer can understand.
+        pass
+
+    return normalized_lines
+
+
+def _normalize_token(tok: tokenize.TokenInfo) -> str:
+    token_type = tok.type
+    value = tok.string
+
+    if token_type in IGNORED_TOKENS:
+        return ""
+    if token_type == token.NAME:
+        return value if value in PYTHON_KEYWORDS else "VAR"
+    if token_type == token.STRING:
+        return "STR"
+    if token_type == token.NUMBER:
+        return "NUM"
+
+    return value

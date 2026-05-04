@@ -32,10 +32,11 @@ class ScanHistoryDialog(QDialog):
 
         self._list = QListWidget()
         for scan in scans:
-            item = QListWidgetItem(
+            item_text = (
                 f"#{scan.id}  |  {scan.created_at}  |  {scan.root_dir}  "
                 f"[{scan.filenames}]"
             )
+            item = QListWidgetItem(item_text)
             item.setData(Qt.ItemDataRole.UserRole, scan.id)
             self._list.addItem(item)
         self._list.setCurrentRow(0)

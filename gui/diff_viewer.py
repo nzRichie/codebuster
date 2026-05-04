@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import os
+from html import escape
 from difflib import SequenceMatcher
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSlot
-from PyQt6.QtGui import QTextCursor, QTextCharFormat, QTextFormat, QColor, QFont
+from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSlot
+from PyQt6.QtGui import (
+    QTextCursor, QTextCharFormat, QTextFormat, QColor, QFont,
+    QDesktopServices,
+)
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QSplitter, QTextEdit, QFrame, QComboBox,
+    QSplitter, QTextEdit, QFrame, QComboBox, QFileDialog, QMessageBox,
 )
 
 from core.database import Database, FileRow, ComparisonRow
@@ -75,6 +79,11 @@ class CodePane(QTextEdit):
 def _read(path: str) -> str:
     with open(path, "r", encoding="utf-8", errors="ignore") as fh:
         return fh.read()
+
+
+def _safe_export_filename(file1: FileRow, file2: FileRow) -> str:
+    name = f"{file1.folder}_vs_{file2.folder}_diff.html"
+    return "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in name)
 
 
 def _compute_line_tags_normalized(
@@ -184,6 +193,17 @@ def _line_extra_selections(
     pane.moveCursor(QTextCursor.MoveOperation.Start)
 
 
+def _html_line_blocks(lines: list[str], tags: list[str]) -> str:
+    if not lines:
+        return '<div class="line">(File is empty)</div>'
+
+    blocks: list[str] = []
+    for line, tag in zip(lines, tags):
+        cls = f"line {tag}" if tag in ("match", "unique") else "line"
+        blocks.append(f'<div class="{cls}">{escape(line)}</div>')
+    return "".join(blocks)
+
+
 def _char_extra_selections(
     pane: CodePane,
     text: str,
@@ -233,6 +253,172 @@ def _char_extra_selections(
 
     pane.setExtraSelections(selections)
     pane.moveCursor(QTextCursor.MoveOperation.Start)
+
+
+def _html_char_spans(
+    text: str,
+    opcodes: list[tuple[str, int, int, int, int]],
+    is_a: bool,
+) -> str:
+    if not text:
+        return '<span class="empty">(File is empty)</span>'
+
+    spans: list[str] = []
+    for op, i1, i2, j1, j2 in opcodes:
+        if is_a:
+            start, end = i1, i2
+            if op == "insert":
+                continue
+        else:
+            start, end = j1, j2
+            if op == "delete":
+                continue
+
+        if start == end:
+            continue
+
+        cls = "match" if op == "equal" else "unique"
+        spans.append(f'<span class="{cls}">{escape(text[start:end])}</span>')
+
+    return "".join(spans)
+
+
+def _build_diff_html(
+    title: str,
+    left_label: str,
+    right_label: str,
+    left_body: str,
+    right_body: str,
+    similarity: float,
+    mode_label: str,
+) -> str:
+    escaped_title = escape(title)
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{escaped_title}</title>
+  <style>
+    :root {{
+      --match-bg: {MATCH_HEX};
+      --unique-bg: {UNIQUE_HEX};
+      --border: #d1d5db;
+      --muted: #4b5563;
+    }}
+    * {{
+      box-sizing: border-box;
+    }}
+    body {{
+      margin: 0;
+      padding: 24px;
+      color: #111827;
+      background: #f9fafb;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      overflow: hidden;
+    }}
+    h1 {{
+      margin: 0 0 8px;
+      font-size: 22px;
+    }}
+    .meta {{
+      margin-bottom: 16px;
+      color: var(--muted);
+      font-size: 14px;
+    }}
+    .legend {{
+      display: flex;
+      gap: 18px;
+      align-items: center;
+      margin-bottom: 16px;
+      font-size: 14px;
+    }}
+    .legend-item {{
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+    }}
+    .swatch {{
+      width: 16px;
+      height: 16px;
+      border: 1px solid #9ca3af;
+      display: inline-block;
+    }}
+    .swatch.match {{
+      background: var(--match-bg);
+    }}
+    .swatch.unique {{
+      background: var(--unique-bg);
+    }}
+    .diff-grid {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 16px;
+      height: calc(100vh - 150px);
+      min-height: 360px;
+    }}
+    .file-panel {{
+      min-width: 0;
+      min-height: 0;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: white;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }}
+    .file-title {{
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 700;
+      font-size: 13px;
+      background: #f3f4f6;
+    }}
+    .code {{
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      margin: 0;
+      padding: 8px 0;
+      white-space: pre;
+      font: 13px/1.25 "Courier New", Courier, monospace;
+      tab-size: 4;
+    }}
+    .line {{
+      min-height: 1.25em;
+      padding: 0 12px;
+      white-space: pre;
+    }}
+    .match {{
+      background: var(--match-bg);
+    }}
+    .unique {{
+      background: var(--unique-bg);
+    }}
+    .empty {{
+      padding: 0 12px;
+    }}
+  </style>
+</head>
+<body>
+  <h1>{escaped_title}</h1>
+  <div class="meta">Similarity: {similarity * 100:.1f}% · View: {escape(mode_label)}</div>
+  <div class="legend" aria-label="Highlight legend">
+    <span class="legend-item"><span class="swatch match"></span>Matching region</span>
+    <span class="legend-item"><span class="swatch unique"></span>Unique region</span>
+  </div>
+  <main class="diff-grid">
+    <section class="file-panel">
+      <div class="file-title">{escape(left_label)}</div>
+      <div class="code">{left_body}</div>
+    </section>
+    <section class="file-panel">
+      <div class="file-title">{escape(right_label)}</div>
+      <div class="code">{right_body}</div>
+    </section>
+  </main>
+</body>
+</html>
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +488,14 @@ class DiffViewer(QWidget):
         )
         self._sync_scroll_btn.toggled.connect(self._on_scroll_sync_toggled)
         header.addWidget(self._sync_scroll_btn)
+
+        self._export_btn = QPushButton("Export HTML")
+        self._export_btn.setStyleSheet(
+            "QPushButton { padding:4px 14px; border-radius:5px;"
+            " background:#e5e7eb; }"
+        )
+        self._export_btn.clicked.connect(self._on_export_html)
+        header.addWidget(self._export_btn)
 
         layout.addLayout(header)
 
@@ -410,6 +604,27 @@ class DiffViewer(QWidget):
                 self._file_cache[file_id] = row
         return self._file_cache.get(file_id)
 
+    def _current_paths_and_labels(self) -> tuple[str, str, str, str, str]:
+        if not self._file1 or not self._file2:
+            raise ValueError("No pair loaded")
+
+        if self._show_normalized:
+            path1 = self._file1.normalized_path
+            path2 = self._file2.normalized_path
+            label_suffix = " [normalized]"
+            mode_label = "Normalized"
+        else:
+            path1 = self._file1.path
+            path2 = self._file2.path
+            label_suffix = ""
+            mode_label = "Original"
+
+        fname1 = os.path.basename(path1) + label_suffix
+        fname2 = os.path.basename(path2) + label_suffix
+        label1 = f"{self._file1.folder} / {fname1}"
+        label2 = f"{self._file2.folder} / {fname2}"
+        return path1, path2, label1, label2, mode_label
+
     def _load_from_comparisons(self, index: int) -> None:
         if not (0 <= index < len(self._comparisons)):
             return
@@ -446,23 +661,14 @@ class DiffViewer(QWidget):
             self._pane2.setPlainText(msg)
             return
 
-        if self._show_normalized:
-            path1 = self._file1.normalized_path
-            path2 = self._file2.normalized_path
-            label_suffix = " [normalized]"
-        else:
-            path1 = self._file1.path
-            path2 = self._file2.path
-            label_suffix = ""
+        path1, path2, label1, label2, _mode_label = self._current_paths_and_labels()
 
         self._sim_label.setText(
             f"Similarity: {self._similarity * 100:.1f}%"
         )
 
-        fname1 = os.path.basename(path1) + label_suffix
-        fname2 = os.path.basename(path2) + label_suffix
-        self._fname1_label.setText(f"◀  {self._file1.folder} / {fname1}")
-        self._fname2_label.setText(f"▶  {self._file2.folder} / {fname2}")
+        self._fname1_label.setText(f"◀  {label1}")
+        self._fname2_label.setText(f"▶  {label2}")
 
         try:
             text1 = _read(path1)
@@ -517,3 +723,75 @@ class DiffViewer(QWidget):
         self._sync_scroll_btn.setText(
             "Sync Scrolling: On" if checked else "Sync Scrolling: Off"
         )
+
+    @pyqtSlot()
+    def _on_export_html(self) -> None:
+        if not self._file1 or not self._file2:
+            QMessageBox.information(
+                self,
+                "Export HTML",
+                "No pair is loaded. Run a scan and select a pair first.",
+            )
+            return
+
+        default_name = _safe_export_filename(self._file1, self._file2)
+        save_path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Export Diff HTML",
+            default_name,
+            "HTML Files (*.html);;All Files (*)",
+        )
+        if not save_path:
+            return
+        if not os.path.splitext(save_path)[1]:
+            save_path += ".html"
+
+        try:
+            path1, path2, label1, label2, mode_label = self._current_paths_and_labels()
+            text1 = _read(path1)
+            text2 = _read(path2)
+
+            if self._show_normalized:
+                opcodes = list(
+                    SequenceMatcher(None, text1, text2, autojunk=False).get_opcodes()
+                )
+                body1 = _html_char_spans(text1, opcodes, is_a=True)
+                body2 = _html_char_spans(text2, opcodes, is_a=False)
+            else:
+                normalizer = get_normalizer(os.path.basename(self._file1.path))
+                lines1, lines2, tags1, tags2 = _compute_line_tags_normalized(
+                    text1, text2, normalizer
+                )
+                body1 = _html_line_blocks(lines1, tags1)
+                body2 = _html_line_blocks(lines2, tags2)
+
+            html = _build_diff_html(
+                "CodeBuster Diff Export",
+                label1,
+                label2,
+                body1,
+                body2,
+                self._similarity,
+                mode_label,
+            )
+            with open(save_path, "w", encoding="utf-8") as fh:
+                fh.write(html)
+
+            if QDesktopServices.openUrl(QUrl.fromLocalFile(save_path)):
+                QMessageBox.information(
+                    self,
+                    "Export HTML",
+                    f"Exported and opened:\n{save_path}",
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Export HTML",
+                    f"Exported, but could not open automatically:\n{save_path}",
+                )
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Export HTML",
+                f"Could not export diff HTML:\n{exc}",
+            )

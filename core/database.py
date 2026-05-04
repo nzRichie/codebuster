@@ -111,16 +111,33 @@ class Database:
     # ------------------------------------------------------------------
 
     def insert_scan(self, root_dir: str, filenames: list[str]) -> int:
+        created_at = datetime.now().isoformat(timespec="seconds")
         cur = self._conn.execute(
             "INSERT INTO scans (root_dir, filenames, created_at) VALUES (?, ?, ?)",
-            (root_dir, ",".join(filenames), datetime.now().isoformat(timespec="seconds")),
+            (root_dir, ",".join(filenames), created_at),
         )
         self._conn.commit()
         return cur.lastrowid  # type: ignore[return-value]
 
     def get_all_scans(self) -> list[ScanRow]:
-        rows = self._conn.execute("SELECT * FROM scans ORDER BY id DESC").fetchall()
-        return [ScanRow(**dict(r)) for r in rows]
+        rows = self._conn.execute(
+            """SELECT scans.*
+               FROM scans
+               WHERE EXISTS (
+                   SELECT 1 FROM files WHERE files.scan_id = scans.id
+               )
+               AND scans.id IN (
+                   SELECT MAX(latest.id)
+                   FROM scans AS latest
+                   WHERE EXISTS (
+                       SELECT 1 FROM files WHERE files.scan_id = latest.id
+                   )
+                   GROUP BY latest.root_dir, latest.filenames
+               )
+               ORDER BY scans.id DESC"""
+        ).fetchall()
+        scans = [ScanRow(**dict(r)) for r in rows]
+        return scans
 
     def get_scan(self, scan_id: int) -> Optional[ScanRow]:
         row = self._conn.execute("SELECT * FROM scans WHERE id=?", (scan_id,)).fetchone()
@@ -130,9 +147,31 @@ class Database:
         self._conn.execute("DELETE FROM scans WHERE id=?", (scan_id,))
         self._conn.commit()
 
+    def delete_older_matching_scans(
+        self,
+        scan_id: int,
+        root_dir: str,
+        filenames: list[str],
+    ) -> int:
+        cur = self._conn.execute(
+            """DELETE FROM scans
+               WHERE id != ?
+               AND root_dir = ?
+               AND filenames = ?""",
+            (scan_id, root_dir, ",".join(filenames)),
+        )
+        self._conn.commit()
+        return cur.rowcount
+
     def get_latest_scan(self) -> Optional[ScanRow]:
         row = self._conn.execute(
-            "SELECT * FROM scans ORDER BY id DESC LIMIT 1"
+            """SELECT scans.*
+               FROM scans
+               WHERE EXISTS (
+                   SELECT 1 FROM files WHERE files.scan_id = scans.id
+               )
+               ORDER BY scans.id DESC
+               LIMIT 1"""
         ).fetchone()
         return ScanRow(**dict(row)) if row else None
 
@@ -159,6 +198,22 @@ class Database:
         self._conn.commit()
         return cur.lastrowid  # type: ignore[return-value]
 
+    def insert_file_rows(
+        self,
+        rows: list[tuple[int, str, str, int, int, int, str]],
+    ) -> list[int]:
+        ids: list[int] = []
+        with self._conn:
+            for row in rows:
+                cur = self._conn.execute(
+                    """INSERT INTO files
+                       (scan_id, path, folder, line_count, word_count, char_count, normalized_path)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    row,
+                )
+                ids.append(cur.lastrowid)  # type: ignore[arg-type]
+        return ids
+
     def get_files_for_scan(self, scan_id: int) -> list[FileRow]:
         rows = self._conn.execute(
             "SELECT * FROM files WHERE scan_id=? ORDER BY id", (scan_id,)
@@ -182,6 +237,20 @@ class Database:
         )
         self._conn.commit()
         return cur.lastrowid  # type: ignore[return-value]
+
+    def insert_comparison_rows(
+        self,
+        rows: list[tuple[int, int, int, float]],
+    ) -> list[int]:
+        ids: list[int] = []
+        with self._conn:
+            for row in rows:
+                cur = self._conn.execute(
+                    "INSERT INTO comparisons (scan_id, file1_id, file2_id, similarity) VALUES (?, ?, ?, ?)",
+                    row,
+                )
+                ids.append(cur.lastrowid)  # type: ignore[arg-type]
+        return ids
 
     def get_comparisons_for_scan(self, scan_id: int) -> list[ComparisonRow]:
         rows = self._conn.execute(

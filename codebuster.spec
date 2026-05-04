@@ -17,6 +17,7 @@ a = Analysis(
         'PyQt6.QtCore',
         'PyQt6.QtGui',
         'PyQt6.QtWidgets',
+        'core.normalizer.csharp',
         'core.normalizer.java',
         'core.normalizer.python_lang',
         'core.normalizer.base',

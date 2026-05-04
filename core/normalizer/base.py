@@ -38,10 +38,11 @@ def get_normalizer(filename: str) -> "BaseNormalizer":
     Return the appropriate normalizer for the given filename, falling
     back to a plain whitespace-stripping normalizer if none matches.
     """
+    from core.normalizer.csharp import CSharpNormalizer
     from core.normalizer.java import JavaNormalizer
     from core.normalizer.python_lang import PythonNormalizer
 
-    for cls in (JavaNormalizer, PythonNormalizer):
+    for cls in (JavaNormalizer, PythonNormalizer, CSharpNormalizer):
         if cls.handles(filename):
             return cls()
 

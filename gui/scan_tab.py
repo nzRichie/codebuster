@@ -1,21 +1,17 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QFileDialog, QProgressBar, QTextEdit,
-    QGroupBox, QScrollArea, QFrame, QSizePolicy,
+    QGroupBox, QScrollArea, QFrame, QSizePolicy, QCheckBox,
 )
 
 from core.scanner import find_files, FoundFile
 from core.comparator import compare_files, FileStats, ComparisonResult
 from core.database import Database
-
-if TYPE_CHECKING:
-    pass
 
 
 # ---------------------------------------------------------------------------
@@ -33,16 +29,19 @@ class ScanWorker(QThread):
         root_dir: str,
         target_names: list[str],
         db_path: str,
+        only_matching_filenames: bool,
     ) -> None:
         super().__init__()
         self._root_dir = root_dir
         self._target_names = target_names
         self._db_path = db_path  # path only — connection opened inside the thread
+        self._only_matching_filenames = only_matching_filenames
 
     def run(self) -> None:
         # Open a fresh connection inside this thread to satisfy SQLite's
         # same-thread requirement.
         db = Database(db_dir=os.path.dirname(self._db_path) or ".")
+        scan_id: int | None = None
         try:
             self.log_message.emit(f"Scanning {self._root_dir} …")
             files: list[FoundFile] = find_files(self._root_dir, self._target_names)
@@ -53,42 +52,73 @@ class ScanWorker(QThread):
 
             self.log_message.emit(f"Found {len(files)} file(s). Normalizing and comparing …")
 
-            scan_id = db.insert_scan(self._root_dir, self._target_names)
             file_id_map: dict[str, int] = {}
 
             def _progress(done: int, total: int) -> None:
                 self.progress.emit(done, total)
 
-            stats_list, comparisons = compare_files(files, progress_callback=_progress)
+            stats_list, comparisons = compare_files(
+                files,
+                progress_callback=_progress,
+                only_matching_filenames=self._only_matching_filenames,
+            )
+            skipped_count = len(files) - len(stats_list)
+
+            if not stats_list:
+                self.error.emit("No non-empty matching files found in the selected directory.")
+                return
+
+            if skipped_count:
+                self.log_message.emit(f"Skipped {skipped_count} empty file(s).")
+
+            self.log_message.emit("Saving results …")
+            scan_id = db.insert_scan(self._root_dir, self._target_names)
 
             # Persist file rows
-            for stat in stats_list:
-                fid = db.insert_file(
-                    scan_id=scan_id,
-                    path=stat.path,
-                    folder=stat.folder,
-                    line_count=stat.line_count,
-                    word_count=stat.word_count,
-                    char_count=stat.char_count,
-                    normalized_path=stat.normalized_path,
+            file_rows = [
+                (
+                    scan_id,
+                    stat.path,
+                    stat.folder,
+                    stat.line_count,
+                    stat.word_count,
+                    stat.char_count,
+                    stat.normalized_path,
                 )
-                file_id_map[stat.path] = fid
+                for stat in stats_list
+            ]
+            file_ids = db.insert_file_rows(file_rows)
+            file_id_map = {
+                stat.path: file_id
+                for stat, file_id in zip(stats_list, file_ids)
+            }
 
             # Persist comparison rows
-            for cmp in comparisons:
-                db.insert_comparison(
-                    scan_id=scan_id,
-                    file1_id=file_id_map[cmp.file1.path],
-                    file2_id=file_id_map[cmp.file2.path],
-                    similarity=cmp.similarity,
-                )
+            db.insert_comparison_rows(
+                [
+                    (
+                        scan_id,
+                        file_id_map[cmp.file1.path],
+                        file_id_map[cmp.file2.path],
+                        cmp.similarity,
+                    )
+                    for cmp in comparisons
+                ]
+            )
 
+            db.delete_older_matching_scans(
+                scan_id,
+                self._root_dir,
+                self._target_names,
+            )
             self.log_message.emit(
                 f"Done. {len(comparisons)} pair(s) compared. Results saved."
             )
             self.finished.emit(scan_id)
 
         except Exception as exc:  # noqa: BLE001
+            if scan_id is not None:
+                db.delete_scan(scan_id)
             self.error.emit(str(exc))
         finally:
             db.close()
@@ -112,7 +142,7 @@ class FilenameListWidget(QWidget):
     def _add_row(self, text: str = "") -> None:
         row = QHBoxLayout()
         edit = QLineEdit(text)
-        edit.setPlaceholderText("e.g. Assignment1.java")
+        edit.setPlaceholderText("e.g. Assignment1.java, .py, or .cs")
         edit.setMinimumWidth(240)
 
         remove_btn = QPushButton("✕")
@@ -181,15 +211,29 @@ class ScanTab(QWidget):
         outer.addWidget(dir_group)
 
         # --- Filename list ---
-        fn_group = QGroupBox("Target Filename(s) to Compare")
+        fn_group = QGroupBox("Target Filename(s) or Extension(s) to Compare")
         fn_layout = QVBoxLayout(fn_group)
+        fn_help = QLabel("Enter exact filenames or file types, e.g. Assignment1.java, .py, or .cs.")
+        fn_help.setStyleSheet("color:#4b5563; font-size:12px;")
         self._filename_list = FilenameListWidget()
-        add_fn_btn = QPushButton("+ Add Filename")
+        add_fn_btn = QPushButton("+ Add Target")
         add_fn_btn.setFixedWidth(130)
         add_fn_btn.clicked.connect(self._filename_list.add_row)
+        fn_layout.addWidget(fn_help)
         fn_layout.addWidget(self._filename_list)
         fn_layout.addWidget(add_fn_btn, alignment=Qt.AlignmentFlag.AlignLeft)
         outer.addWidget(fn_group)
+
+        # --- Comparison options ---
+        options_group = QGroupBox("Comparison Options")
+        options_layout = QVBoxLayout(options_group)
+        self._matching_names_check = QCheckBox("Only compare files with matching filenames")
+        self._matching_names_check.setChecked(True)
+        self._matching_names_check.setToolTip(
+            "When scanning by extension, skip comparisons between differently named files."
+        )
+        options_layout.addWidget(self._matching_names_check)
+        outer.addWidget(options_group)
 
         # --- Scan button ---
         self._scan_btn = QPushButton("  Start Scan  ")
@@ -240,7 +284,7 @@ class ScanTab(QWidget):
 
         filenames = self._filename_list.get_filenames()
         if not filenames:
-            self._log.append("<font color='red'>Please enter at least one target filename.</font>")
+            self._log.append("<font color='red'>Please enter at least one target filename or extension.</font>")
             return
 
         self._scan_btn.setEnabled(False)
@@ -248,7 +292,12 @@ class ScanTab(QWidget):
         self._progress_bar.setValue(0)
         self._log.clear()
 
-        self._worker = ScanWorker(root_dir, filenames, self._db.path)
+        self._worker = ScanWorker(
+            root_dir,
+            filenames,
+            self._db.path,
+            self._matching_names_check.isChecked(),
+        )
         self._worker.progress.connect(self._on_progress)
         self._worker.log_message.connect(self._on_log)
         self._worker.finished.connect(self._on_finished)
@@ -257,6 +306,8 @@ class ScanTab(QWidget):
 
     def _on_progress(self, done: int, total: int) -> None:
         pct = int(done / total * 100) if total else 0
+        if total and done >= total:
+            pct = 95
         self._progress_bar.setValue(pct)
         self._progress_bar.setFormat(f"{done} / {total} pairs  ({pct}%)")
 

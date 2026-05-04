@@ -25,6 +25,23 @@ def _sim_color(sim: float) -> QColor:
     return QColor(200, 240, 200)      # light green
 
 
+def _display_path(path: str, root_dir: str) -> str:
+    """Return path relative to the selected scan root when possible."""
+    if not root_dir:
+        return path
+
+    try:
+        abs_root = os.path.abspath(root_dir)
+        abs_path = os.path.abspath(path)
+        if os.path.commonpath([abs_root, abs_path]) != abs_root:
+            return path
+        rel_path = os.path.relpath(abs_path, abs_root)
+    except ValueError:
+        return path
+
+    return rel_path if rel_path != "." else os.path.basename(path)
+
+
 @dataclass(frozen=True)
 class _ResultRow:
     cmp: ComparisonRow
@@ -34,6 +51,8 @@ class _ResultRow:
     f2_folder_lower: str
     f1_basename: str
     f2_basename: str
+    f1_display_path: str
+    f2_display_path: str
 
 
 class ResultsTab(QWidget):
@@ -142,6 +161,7 @@ class ResultsTab(QWidget):
         """
         self._scan_id = scan_id
         scan = self._db.get_scan(scan_id)
+        scan_root = scan.root_dir if scan else ""
         if scan:
             self._scan_label.setText(
                 f"Scan #{scan.id}  |  {scan.root_dir}  |  {scan.created_at}"
@@ -169,6 +189,8 @@ class ResultsTab(QWidget):
                 f2_folder_lower=f2.folder.lower(),
                 f1_basename=os.path.basename(f1.path),
                 f2_basename=os.path.basename(f2.path),
+                f1_display_path=_display_path(f1.path, scan_root),
+                f2_display_path=_display_path(f2.path, scan_root),
             ))
 
         self._populate_filename_filter()
@@ -257,8 +279,8 @@ class ResultsTab(QWidget):
                 QTableWidgetItem(f1.folder),
                 QTableWidgetItem(f2.folder),
                 _NumericItem(f"{sim_pct:.2f}%", cmp.similarity),
-                QTableWidgetItem(f1.path),
-                QTableWidgetItem(f2.path),
+                QTableWidgetItem(row.f1_display_path),
+                QTableWidgetItem(row.f2_display_path),
                 QTableWidgetItem("View"),
             ]
 

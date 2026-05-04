@@ -57,6 +57,12 @@ def _file_stats(found: FoundFile, normalized_path: str) -> FileStats:
     )
 
 
+def _comparison_group(found: FoundFile, only_matching_filenames: bool) -> str:
+    if only_matching_filenames:
+        return os.path.basename(found.path)
+    return found.comparison_group or os.path.basename(found.path)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -77,10 +83,14 @@ def normalize_and_save(found: FoundFile) -> tuple[str, str]:
 def compare_files(
     files: list[FoundFile],
     progress_callback: Callable[[int, int], None] | None = None,
+    only_matching_filenames: bool = False,
 ) -> tuple[list[FileStats], list[ComparisonResult]]:
     """
     Normalize every file (saving the result to disk), then pairwise-compare
-    files that share the same basename.
+    files that share a comparison group.
+
+    If only_matching_filenames is true, files are grouped by basename even when
+    they were discovered by extension.
 
     progress_callback(completed_pairs, total_pairs) is called after each pair.
     Returns (file_stats_list, comparison_results_list).
@@ -88,18 +98,24 @@ def compare_files(
     # Normalize all files first
     norm_cache: dict[str, str] = {}   # path -> normalized text
     stats_list: list[FileStats] = []
+    comparable_files: list[FoundFile] = []
 
     for found in files:
         _orig, normalized = normalize_and_save(found)
+        if not normalized:
+            continue
+
         norm_cache[found.path] = normalized
+        comparable_files.append(found)
         norm_path = _normalized_path(found.path)
         stats_list.append(_file_stats(found, norm_path))
 
-    # Pairwise comparisons, grouped by target filename. This keeps scans with
-    # multiple assignment files from comparing unrelated source files.
+    # Pairwise comparisons, grouped by target filename or extension unless the
+    # caller asks to compare only files with matching basenames.
     files_by_name: dict[str, list[FoundFile]] = defaultdict(list)
-    for found in files:
-        files_by_name[os.path.basename(found.path)].append(found)
+    for found in comparable_files:
+        group = _comparison_group(found, only_matching_filenames)
+        files_by_name[group].append(found)
 
     total_pairs = sum(
         len(group) * (len(group) - 1) // 2
@@ -116,12 +132,7 @@ def compare_files(
             for j in range(i + 1, n):
                 t1 = norm_cache[group[i].path]
                 t2 = norm_cache[group[j].path]
-                if not t1 and not t2:
-                    # Empty/comment-only pairs contain no comparable code, so they
-                    # should not outrank real matches as a perfect 100% result.
-                    sim = 0.0
-                else:
-                    sim = SequenceMatcher(None, t1, t2).ratio()
+                sim = SequenceMatcher(None, t1, t2).ratio()
                 results.append(ComparisonResult(
                     file1=stats_by_path[group[i].path],
                     file2=stats_by_path[group[j].path],
