@@ -10,7 +10,8 @@ student coding submissions. Powered by Python + PyQt6.
 - **Multi-file scanning** – specify one or more target filenames or extensions;
   all matching files under the submission root are discovered and pairwise-compared.
 - **Normalisation** – comments, whitespace and variable names are stripped so
-  only code structure is compared (Java, Python, and C# built-in; extensible).
+  only code structure is compared (Java, Python, C#, and JavaScript-family
+  files built-in; extensible).
 - **Results table** – sortable by any column; filterable by keyword in folder
   names or by minimum similarity percentage.
 - **Side-by-side diff viewer** – two synchronised scrolling panes with
@@ -116,7 +117,7 @@ The executable is written to `dist/CodeBuster` (Linux/macOS) or
 3. Register it in `core/normalizer/base.py` → `get_normalizer()`.
 
 Scans can target exact filenames such as `MergeRuns.java` or file types such as
-`.py`, `py`, `.cs`, or `cs`.
+`.py`, `py`, `.cs`, `cs`, `.js`, `jsx`, or `tsx`.
 
 ---
 
@@ -135,6 +136,7 @@ codebuster/
 │       ├── base.py           Abstract base + registry
 │       ├── csharp.py         C# normaliser
 │       ├── java.py           Java normaliser
+│       ├── javascript.py     JavaScript / TypeScript normaliser
 │       └── python_lang.py    Python normaliser
 └── gui/
     ├── main_window.py        Main window + menus

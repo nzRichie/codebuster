@@ -40,9 +40,15 @@ def get_normalizer(filename: str) -> "BaseNormalizer":
     """
     from core.normalizer.csharp import CSharpNormalizer
     from core.normalizer.java import JavaNormalizer
+    from core.normalizer.javascript import JavaScriptNormalizer
     from core.normalizer.python_lang import PythonNormalizer
 
-    for cls in (JavaNormalizer, PythonNormalizer, CSharpNormalizer):
+    for cls in (
+        JavaNormalizer,
+        PythonNormalizer,
+        CSharpNormalizer,
+        JavaScriptNormalizer,
+    ):
         if cls.handles(filename):
             return cls()
 

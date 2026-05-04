@@ -142,7 +142,7 @@ class FilenameListWidget(QWidget):
     def _add_row(self, text: str = "") -> None:
         row = QHBoxLayout()
         edit = QLineEdit(text)
-        edit.setPlaceholderText("e.g. Assignment1.java, .py, or .cs")
+        edit.setPlaceholderText("e.g. Assignment1.java, .py, .cs, or .js")
         edit.setMinimumWidth(240)
 
         remove_btn = QPushButton("✕")
@@ -213,7 +213,9 @@ class ScanTab(QWidget):
         # --- Filename list ---
         fn_group = QGroupBox("Target Filename(s) or Extension(s) to Compare")
         fn_layout = QVBoxLayout(fn_group)
-        fn_help = QLabel("Enter exact filenames or file types, e.g. Assignment1.java, .py, or .cs.")
+        fn_help = QLabel(
+            "Enter exact filenames or file types, e.g. Assignment1.java, .py, .cs, or .js."
+        )
         fn_help.setStyleSheet("color:#4b5563; font-size:12px;")
         self._filename_list = FilenameListWidget()
         add_fn_btn = QPushButton("+ Add Target")

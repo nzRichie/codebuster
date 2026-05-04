@@ -5,6 +5,7 @@ import unittest
 from core.comparator import compare_files
 from core.normalizer.base import get_normalizer
 from core.normalizer.csharp import CSharpNormalizer
+from core.normalizer.javascript import JavaScriptNormalizer
 from core.normalizer.python_lang import PythonNormalizer
 from core.scanner import FoundFile, find_files
 
@@ -18,6 +19,7 @@ class ScannerTests(unittest.TestCase):
                 "Assignment1.java",
                 "solution.py",
                 "Program.cs",
+                "app.jsx",
                 "solution.normalized.py",
                 "._Program.cs",
                 "notes.txt",
@@ -30,16 +32,17 @@ class ScannerTests(unittest.TestCase):
             with open(os.path.join(macosx, "Assignment1.java"), "w", encoding="utf-8") as fh:
                 fh.write("")
 
-            found = find_files(root, ["Assignment1.java", ".py", "cs"])
+            found = find_files(root, ["Assignment1.java", ".py", "cs", "jsx"])
             by_name = {os.path.basename(item.path): item for item in found}
 
             self.assertEqual(
                 set(by_name),
-                {"Assignment1.java", "solution.py", "Program.cs"},
+                {"Assignment1.java", "solution.py", "Program.cs", "app.jsx"},
             )
             self.assertEqual(by_name["Assignment1.java"].comparison_group, "Assignment1.java")
             self.assertEqual(by_name["solution.py"].comparison_group, ".py")
             self.assertEqual(by_name["Program.cs"].comparison_group, ".cs")
+            self.assertEqual(by_name["app.jsx"].comparison_group, ".jsx")
 
 
 class ComparatorTests(unittest.TestCase):
@@ -71,6 +74,8 @@ class ComparatorTests(unittest.TestCase):
             ".java": "public class Answer { int solve(int value) { return value + 1; } }\n",
             ".cs": "class Answer { int Solve(int value) { return value + 1; } }\n",
             ".py": "def solve(value):\n    return value + 1\n",
+            ".js": "function solve(value) { return value + 1; }\n",
+            ".jsx": "const Answer = ({ value }) => <span>{value + 1}</span>;\n",
         }
 
         for extension, content in examples.items():
@@ -168,10 +173,44 @@ class CSharpNormalizerTests(unittest.TestCase):
         )
 
 
+class JavaScriptNormalizerTests(unittest.TestCase):
+    def test_javascript_normalizer_ignores_comments_without_cutting_strings(self) -> None:
+        normalizer = JavaScriptNormalizer()
+
+        self.assertEqual(
+            normalizer.normalize('const url = "http://example"; // real comment\n'),
+            "constVAR=STR;",
+        )
+        self.assertEqual(
+            normalizer.normalize(
+                "function add(value) { /* block comment */ return value + 1; }\n"
+            ),
+            normalizer.normalize(
+                "function sum(amount) { /* changed */ return amount + 2; }\n"
+            ),
+        )
+
+    def test_javascript_normalizer_handles_jsx_and_typescript_extensions(self) -> None:
+        normalizer = JavaScriptNormalizer()
+
+        self.assertEqual(
+            normalizer.normalize("const View = ({ name }) => <h1>{name}</h1>;\n"),
+            normalizer.normalize("const Page = ({ title }) => <h1>{title}</h1>;\n"),
+        )
+        self.assertEqual(
+            normalizer.normalize("type Item = { count: number };\n"),
+            "typeVAR={VAR:number};",
+        )
+
+
 class RegistryTests(unittest.TestCase):
-    def test_registry_selects_python_and_csharp_by_extension(self) -> None:
+    def test_registry_selects_language_normalizers_by_extension(self) -> None:
         self.assertIsInstance(get_normalizer("answer.py"), PythonNormalizer)
         self.assertIsInstance(get_normalizer("Program.cs"), CSharpNormalizer)
+        self.assertIsInstance(get_normalizer("app.js"), JavaScriptNormalizer)
+        self.assertIsInstance(get_normalizer("Component.jsx"), JavaScriptNormalizer)
+        self.assertIsInstance(get_normalizer("module.mjs"), JavaScriptNormalizer)
+        self.assertIsInstance(get_normalizer("component.tsx"), JavaScriptNormalizer)
 
 
 if __name__ == "__main__":
