@@ -291,8 +291,10 @@ def _build_diff_html(
     right_body: str,
     similarity: float,
     mode_label: str,
+    wrap_long_lines: bool = False,
 ) -> str:
     escaped_title = escape(title)
+    body_class = ' class="wrap-long-lines"' if wrap_long_lines else ""
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -383,6 +385,11 @@ def _build_diff_html(
       font: 13px/1.25 "Courier New", Courier, monospace;
       tab-size: 4;
     }}
+    body.wrap-long-lines .code {{
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }}
     .line {{
       min-height: 1.25em;
       padding: 0 12px;
@@ -399,7 +406,7 @@ def _build_diff_html(
     }}
   </style>
 </head>
-<body>
+<body{body_class}>
   <h1>{escaped_title}</h1>
   <div class="meta">Similarity: {similarity * 100:.1f}% · View: {escape(mode_label)}</div>
   <div class="legend" aria-label="Highlight legend">
@@ -773,6 +780,7 @@ class DiffViewer(QWidget):
                 body2,
                 self._similarity,
                 mode_label,
+                wrap_long_lines=self._show_normalized,
             )
             with open(save_path, "w", encoding="utf-8") as fh:
                 fh.write(html)
