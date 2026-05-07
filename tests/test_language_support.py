@@ -154,6 +154,27 @@ class PythonNormalizerTests(unittest.TestCase):
             normalizer.normalize("def solve(other):\n    return other + 2\n"),
         )
 
+    def test_python_normalizer_ignores_standalone_triple_quoted_strings(self) -> None:
+        normalizer = PythonNormalizer()
+
+        self.assertEqual(
+            normalizer.normalize(
+                '"""Explains the submission."""\n'
+                "def solve(value):\n"
+                '    """Explains the function."""\n'
+                "    return value + 1\n"
+            ),
+            normalizer.normalize("def solve(value):\n    return value + 1\n"),
+        )
+
+    def test_python_normalizer_keeps_assigned_triple_quoted_strings(self) -> None:
+        normalizer = PythonNormalizer()
+
+        self.assertEqual(
+            normalizer.normalize('message = """not a comment"""\n'),
+            "VAR=STR",
+        )
+
 
 class CSharpNormalizerTests(unittest.TestCase):
     def test_csharp_normalizer_ignores_comments_without_cutting_strings(self) -> None:
