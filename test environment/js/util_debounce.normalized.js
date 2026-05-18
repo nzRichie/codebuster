@@ -1,0 +1,1 @@
+exportfunctionVAR(VAR,VAR){letVAR=null;return(...VAR)=>{VAR(VAR);VAR=VAR(()=>{VAR=null;VAR(...VAR);},VAR);};}

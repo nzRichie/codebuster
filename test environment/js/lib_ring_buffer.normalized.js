@@ -1,0 +1,1 @@
+exportclassVAR{constructor(VAR){if(VAR<NUM){thrownewVAR(STR);}this.VAR=VAR;this.VAR=[];}VAR(VAR){if(this.VAR.VAR>=this.VAR){this.VAR.VAR();}this.VAR.VAR(VAR);}VAR(){return[...this.VAR];}}

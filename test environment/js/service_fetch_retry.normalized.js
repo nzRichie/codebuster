@@ -1,0 +1,1 @@
+constVAR=(VAR)=>newVAR((VAR)=>VAR(VAR,VAR));exportasyncfunctionVAR(VAR,{VAR=NUM,VAR=NUM}={}){letVAR;for(letVAR=NUM;VAR<VAR;VAR++){try{constVAR=awaitVAR(VAR);if(VAR.VAR){returnVAR;}VAR=newVAR(STR);}catch(VAR){VAR=VAR;}if(VAR+NUM<VAR){awaitVAR(VAR*VAR.VAR(NUM,VAR));}}throwVAR;}

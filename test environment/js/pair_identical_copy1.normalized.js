@@ -1,0 +1,1 @@
+functionVAR(VAR,VAR,VAR){returnVAR.VAR(VAR,VAR.VAR(VAR,VAR));}export{VAR};

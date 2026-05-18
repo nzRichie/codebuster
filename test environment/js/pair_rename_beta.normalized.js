@@ -1,0 +1,1 @@
+functionVAR(VAR){constVAR=newVAR();for(constVARofVAR){VAR.VAR(VAR);}returnVAR.VAR;}exportdefaultVAR;

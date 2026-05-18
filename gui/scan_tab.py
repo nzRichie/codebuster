@@ -71,6 +71,18 @@ class ScanWorker(QThread):
             if skipped_count:
                 self.log_message.emit(f"Skipped {skipped_count} empty file(s).")
 
+            if (
+                not comparisons
+                and len(stats_list) > 1
+                and self._only_matching_filenames
+            ):
+                self.log_message.emit(
+                    "Tip: No pairs compared — \"Only compare files with matching filenames\" "
+                    "is on and each matching file has a different basename. Uncheck it to compare "
+                    "all targets of this type across the tree (needed for scans like many different "
+                    ".js names in one folder)."
+                )
+
             self.log_message.emit("Saving results …")
             scan_id = db.insert_scan(self._root_dir, self._target_names)
 
